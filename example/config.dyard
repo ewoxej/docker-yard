@@ -1,0 +1,25 @@
+DOMAIN: example.com
+EMAIL: email@example.com
+DATA_PATH: /storage/path
+
+input:
+  containers: ./containers
+  env: ./env
+  network: ./network
+
+output:
+  compose: ./generated/docker-compose.yml
+  traefik: ./storage/traefik/config
+  env: ./generated/.env
+
+router_container: traefik
+
+traefik:
+  entryPoints:
+    - websecure
+  certResolver: myresolver
+
+defaults:
+  restart: unless-stopped
+  mem_limit: 512m
+  cpus: 1

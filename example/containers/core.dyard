@@ -1,0 +1,40 @@
+container traefik:v3.6.1 as traefik
+serve as traefik
+limit to 1g, 1cpu
+map ${TRAEFIK_CONFIG_PATH@pathes@common}/traefik.yml as /traefik.yml
+map ${TRAEFIK_CONFIG_PATH@pathes@common}/conf.d as /conf.d
+map ${TRAEFIK_DATA_PATH@pathes@common}/letsencrypt as /letsencrypt
+map ${TRAEFIK_DATA_PATH@pathes@common}/certs as /certs
+env from traefik@common.env
+depends_on authelia healthy, docker-proxy started
+network-config from network/static.yml
+network proxy-net
+raw ports: ["80:80", "443:443"]
+raw command: ["--providers.docker.endpoint=http://docker-proxy:2375 --log.level=ERROR"]
+
+container tecnativa/docker-socket-proxy as docker-proxy
+limit to 512m, 1cpu
+map /var/run/docker.sock as /var/run/docker.sock
+env from CONTAINERS=1, CONTAINERS_LIST=1, EVENTS=1, SYSTEM=1
+raw expose: ["2375"]
+network proxy-net
+
+container authelia/authelia:4.39 as authelia
+serve as idm:9091 through cloudflare-secured
+limit to 512m, 1cpu
+map ${AUTHELIA_SECRETS_PATH@pathes@common} as /secrets:ro
+map ${AUTHELIA_CONFIG_PATH@pathes@common} as /config:rw
+env from authelia@common.env
+raw user: "1000:1000"
+network redis-net
+depends_on redis healthy
+healthcheck with "wget -q -O - http://localhost:9091/api/health"
+healthcheck every 10s repeat 10 wait 5s
+
+container redis:latest as redis
+limit to 1g, 1cpu
+network redis-net
+healthcheck with "redis-cli ping"
+healthcheck repeat 10 wait 5s
+raw command: redis-server --requirepass ${REDIS_HOST_PASSWORD@secrets@common}
+end

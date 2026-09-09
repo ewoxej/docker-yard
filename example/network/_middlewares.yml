@@ -1,0 +1,12 @@
+http:
+  middlewares:
+    upload-limit-10g:
+      buffering:
+          maxRequestBodyBytes: 10000000000
+
+    hsts-headers:
+      headers:
+        stsSeconds: 15552000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true

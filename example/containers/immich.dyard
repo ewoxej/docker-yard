@@ -1,0 +1,24 @@
+container image ghcr.io/immich-app/immich-server:v3.1.0 as immich
+serve as immich:2283 through hsts-headers@file, upload-limit-10g@file
+limit to 4g, 4cpu
+env from app@immich.env
+depends_on immich-redis, immich-db
+map ${UPLOAD_LOCATION@pathes@common} as /usr/src/app/upload
+map /etc/localtime as /etc/localtime:ro
+
+container image ghcr.io/immich-app/immich-machine-learning:v3.1.0 as immich-ml
+env from app@immich.env
+limit to 4g, 4cpu
+map ${ML_DATA_LOCATION@pathes@common} as /cache
+network immich-net
+
+container docker.io/valkey/valkey:8-bookworm as immich-redis
+limit to 4g, 4cpu
+healthcheck with "redis-cli ping || exit 1"
+network immich-net
+
+container ghcr.io/immich-app/postgres:14-vectorchord0.3.0-pgvectors0.2.0 as immich-db
+limit to 4g, 4cpu
+env from db@immich.env
+map ${DB_DATA_LOCATION@pathes@common} as /var/lib/postgresql/data
+network immich-net

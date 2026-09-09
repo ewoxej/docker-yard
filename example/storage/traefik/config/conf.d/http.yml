@@ -1,0 +1,41 @@
+http:
+  routers:
+    traefik:
+      rule: Host(`traefik.example.com`)
+      entryPoints:
+      - websecure
+      service: api@internal
+      tls:
+        certResolver: myresolver
+
+    idm:
+      rule: Host(`idm.example.com`)
+      entryPoints:
+      - websecure
+      service: idm-service
+      middlewares:
+      - cloudflare-secured@file
+      tls:
+        certResolver: myresolver
+
+    immich:
+      rule: Host(`immich.example.com`)
+      entryPoints:
+      - websecure
+      service: immich-service
+      middlewares:
+      - hsts-headers@file
+      - upload-limit-10g@file
+      tls:
+        certResolver: myresolver
+
+  services:
+    idm-service:
+      loadBalancer:
+        servers:
+        - url: http://authelia:9091
+
+    immich-service:
+      loadBalancer:
+        servers:
+        - url: http://immich:2283
