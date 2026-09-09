@@ -1,0 +1,66 @@
+{
+  "Container snippet": {
+    "prefix": "container",
+    "body": [
+      "container image ${1:image:tag} as ${2:service-name}",
+      "limit to ${3:512m}, ${4:1cpu}",
+      "network: ${5:app-net}",
+      "expose: ${6:8080}",
+      "healthcheck interval 30s timeout 10s retries 3 start_period 40s"
+    ],
+    "description": "Basic container definition"
+  },
+  "Service with network": {
+    "prefix": "service-net",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "network: ${3:app-net}",
+      "limit to ${4:512m}, ${5:1cpu}",
+      "expose: ${6:8080}"
+    ],
+    "description": "Service with network definition"
+  },
+  "Service with healthcheck": {
+    "prefix": "service-health",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "healthcheck interval ${3:30s} timeout ${4:10s} retries ${5:3} start_period ${6:40s}"
+    ],
+    "description": "Service with healthcheck"
+  },
+  "Service with depends_on": {
+    "prefix": "depends",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "depends_on ${3:db-service}:${4:Started}"
+    ],
+    "description": "Service with dependency"
+  },
+  "Service with volumes": {
+    "prefix": "volumes",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "map ${3:/app/data} as ${4:/data:rw}"
+    ],
+    "description": "Service with volume mapping"
+  },
+  "Service with env": {
+    "prefix": "env-var",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "env ${3:VAR_NAME}} = ${4:value}",
+      "env ${5:SECRET_VAR}} = ${6:*SECRET_VALUE}"
+    ],
+    "description": "Service with environment variables"
+  },
+  "Service with Traefik routing": {
+    "prefix": "traefik-route",
+    "body": [
+      "container image ${1:image:tag} as ${2:name}",
+      "network: app-net",
+      "expose: ${3:8080}",
+      "serve as ${4:app}:${3:8080}"
+    ],
+    "description": "Service with Traefik routing"
+  }
+}

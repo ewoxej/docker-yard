@@ -1,0 +1,70 @@
+{
+  "name": "dyard-syntax",
+  "displayName": "dyard DSL Syntax Highlighting",
+  "description": "Syntax highlighting for dyard infrastructure DSL files (.dyard, config.dyard, .env)",
+  "version": "0.2.0",
+  "publisher": "dyard",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "dyard",
+    "docker",
+    "traefik",
+    "infrastructure",
+    "dsl"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dyard",
+        "aliases": [
+          "dyard DSL",
+          "dyard"
+        ],
+        "extensions": [
+          ".dyard"
+        ],
+        "configuration": "./language-configuration/dyard.json"
+      },
+      {
+        "id": "dyard-config",
+        "aliases": [
+          "dyard Config",
+          "config.dyard"
+        ],
+        "filenames": [
+          "config.dyard"
+        ],
+        "configuration": "./language-configuration/config-dyard.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dyard",
+        "scopeName": "source.dyard",
+        "path": "./syntaxes/dyard.tmLanguage.json"
+      },
+      {
+        "language": "dyard-config",
+        "scopeName": "source.config.dyard",
+        "path": "./syntaxes/config-dyard.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "dyard",
+        "path": "./snippets/dyard.json"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/dyard"
+  }
+}

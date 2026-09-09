@@ -1,0 +1,4 @@
+/target
+example/build
+.DS_Store
+/newenv

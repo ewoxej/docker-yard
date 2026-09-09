@@ -1,0 +1,90 @@
+{
+  "scopeName": "source.dyard",
+  "name": "dyard",
+  "fileTypes": ["dyard"],
+  "patterns": [
+    {
+      "comment": "Line comment",
+      "name": "comment.line.dyard",
+      "match": "#.*$"
+    },
+    {
+      "comment": "container declaration with 'image' keyword: container image nginx:latest as name",
+      "match": "^\\s*(container)\\s+(image)\\s+([\\w\\./:\\-@]+)(?:\\s+(as)\\s+([\\w\\-]+):?)?",
+      "captures": {
+        "1": {"name": "keyword.control.dyard"},
+        "2": {"name": "keyword.operator.dyard"},
+        "3": {"name": "string.dyard"},
+        "4": {"name": "keyword.operator.dyard"},
+        "5": {"name": "entity.name.type.dyard"}
+      }
+    },
+    {
+      "comment": "container declaration without 'image': container nginx:latest as name",
+      "match": "^\\s*(container)\\s+([\\w\\./:\\-@]+)\\s+(as)\\s+([\\w\\-]+):?",
+      "captures": {
+        "1": {"name": "keyword.control.dyard"},
+        "2": {"name": "string.dyard"},
+        "3": {"name": "keyword.operator.dyard"},
+        "4": {"name": "entity.name.type.dyard"}
+      }
+    },
+    {
+      "comment": "serve — externally exposed routes (distinct color to spot public services at a glance)",
+      "match": "^\\s*(serve)\\b",
+      "captures": {
+        "1": {"name": "entity.name.function.dyard"}
+      }
+    },
+    {
+      "comment": "Block directives — primary keyword color",
+      "name": "keyword.control.dyard",
+      "match": "^\\s*(network-config|network|limit|map|expose|user|depends_on|healthcheck|env|route_add|raw|end|container)\\b"
+    },
+    {
+      "comment": "Connector/modifier keywords — third color",
+      "name": "keyword.operator.dyard",
+      "match": "\\b(as|with|through|from|to|image|healthy|started|after|every|repeat|wait)\\b"
+    },
+    {
+      "comment": "String values in double quotes",
+      "name": "string.quoted.double.dyard",
+      "match": "\"[^\"]*\""
+    },
+    {
+      "comment": "String values in single quotes",
+      "name": "string.quoted.single.dyard",
+      "match": "'[^']*'"
+    },
+    {
+      "comment": "Variable references ${VAR}, ${VAR@section@file.env}",
+      "name": "variable.other.dyard",
+      "match": "\\$\\{[\\w@./\\-]+\\}"
+    },
+    {
+      "comment": "Numbers with time/size/cpu units",
+      "name": "constant.numeric.dyard",
+      "match": "\\b[0-9]+(m|g|k|s|ms|cpu|cpus)?\\b"
+    },
+    {
+      "comment": "Port notation :8080",
+      "name": "constant.numeric.dyard",
+      "match": ":[0-9]+\\b"
+    },
+    {
+      "comment": "Path-like strings",
+      "name": "string.dyard",
+      "match": "/[\\w/\\-.]*"
+    },
+    {
+      "comment": "Secret marker *VAR",
+      "name": "markup.bold.dyard",
+      "match": "\\*(?=[A-Z_a-z])"
+    },
+    {
+      "comment": "Boolean values",
+      "name": "constant.language.dyard",
+      "match": "\\b(true|false|yes|no)\\b"
+    }
+  ]
+}

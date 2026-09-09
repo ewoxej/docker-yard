@@ -1,0 +1,78 @@
+{
+  "scopeName": "source.config.dyard",
+  "name": "config.dyard",
+  "fileTypes": ["config.dyard"],
+  "patterns": [
+    {
+      "comment": "Line comment",
+      "name": "comment.line.dyard",
+      "match": "#.*$"
+    },
+    {
+      "comment": "Section headers: input:, output:, traefik:, defaults:",
+      "name": "entity.name.section.dyard",
+      "match": "^(input|output|traefik|defaults)\\s*:"
+    },
+    {
+      "comment": "Special root-level keys",
+      "name": "entity.name.section.dyard",
+      "match": "^(router_container)\\s*:"
+    },
+    {
+      "comment": "Global variables (UPPERCASE): DOMAIN, DATA_PATH, EMAIL, etc.",
+      "match": "^([A-Z][A-Z0-9_]*)\\s*[=:]",
+      "captures": {
+        "1": {"name": "variable.other.constant.dyard"}
+      }
+    },
+    {
+      "comment": "Subsection keys: containers, env, compose, traefik, entryPoints, certResolver, etc.",
+      "match": "^\\s+([a-zA-Z][\\w]*)\\s*:",
+      "captures": {
+        "1": {"name": "variable.other.dyard"}
+      }
+    },
+    {
+      "comment": "List items (- value)",
+      "match": "^\\s*-\\s+(.+)$",
+      "captures": {
+        "1": {"name": "string.dyard"}
+      }
+    },
+    {
+      "comment": "Variable references ${VAR}",
+      "name": "variable.other.dyard",
+      "match": "\\$\\{[\\w@./\\-]+\\}"
+    },
+    {
+      "comment": "String values in double quotes",
+      "name": "string.quoted.double.dyard",
+      "match": "\"[^\"]*\""
+    },
+    {
+      "comment": "String values in single quotes",
+      "name": "string.quoted.single.dyard",
+      "match": "'[^']*'"
+    },
+    {
+      "comment": "Path values",
+      "name": "string.dyard",
+      "match": "(\\./|/)[\\w/\\-.]*"
+    },
+    {
+      "comment": "Secret marker *",
+      "name": "markup.bold.dyard",
+      "match": "\\*(?=[A-Z_a-z])"
+    },
+    {
+      "comment": "Boolean values",
+      "name": "constant.language.dyard",
+      "match": "\\b(true|false|yes|no)\\b"
+    },
+    {
+      "comment": "Numbers",
+      "name": "constant.numeric.dyard",
+      "match": "\\b[0-9]+\\b"
+    }
+  ]
+}
