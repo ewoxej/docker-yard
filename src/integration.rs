@@ -167,9 +167,26 @@ impl ProjectBuilder {
         fs::create_dir_all(&env_output_dir)
             .map_err(|e| format!("Failed to create env output dir: {}", e))?;
 
+        // On --regenerate, remove stale env files (e.g. old .secrets.env from previous runs)
+        if regenerate && env_output_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&env_output_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("env") {
+                        let _ = fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+
         // --- Pre-process: resolve VarRefs and template strings ---
+        // ${KEY@section@file} refs in volume/raw fields are rewritten to ${KEY_SECTION_FILE}
+        // and collected here for root .env — no auto-deduction, no naming conflicts.
+        let mut explicit_refs: HashMap<String, String> = HashMap::new();
         let mut resolution_errors: Vec<String> = Vec::new();
-        let resolved_services: Vec<_> = ctx.project.services.iter().map(|svc| {
+        let mut resolved_services: Vec<crate::ast::ServiceBlock> = Vec::new();
+
+        for svc in &ctx.project.services {
             let mut svc = svc.clone();
             let loc = format!("{}:{}", svc.source_file, svc.source_line);
 
@@ -207,52 +224,32 @@ impl ProjectBuilder {
                 other => Some(other),
             }).collect();
 
-            // Inject Inline { secret: true } sentinels for any secrets found in File sources.
-            // This ensures compose.rs sees has_secret_inline=true and adds the .secrets.env
-            // env_file reference, even though the actual value comes from the File source.
-            let file_secret_inlines: Vec<EnvSource> = svc.env_from.iter()
-                .filter_map(|src| if let EnvSource::File { file, section } = src {
-                    Some((file.clone(), section.clone()))
-                } else { None })
-                .flat_map(|(file, section)| {
-                    Self::env_file_lookup(&ctx.project.env_files, &file)
-                        .map(|ef| {
-                            let vars = Self::resolve_env_section(ef, section.as_deref(), 0);
-                            vars.into_iter()
-                                .filter(|(_, v)| v.secret)
-                                .map(|(k, v)| EnvSource::Inline { key: k, value: v.value, secret: true })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                })
-                .collect();
-            svc.env_from.extend(file_secret_inlines);
-
-            // Resolve ${KEY@section@file} in volume host paths
+            // Resolve ${KEY@section@file} in volume host paths.
+            // Non-secrets are inlined; secrets become ${KEY} and collected for root .env.
             svc.volumes = svc.volumes.into_iter().map(|mut v| {
-                let resolved = Self::resolve_template_string(
+                let resolved = Self::resolve_and_collect_refs(
                     &v.host_path, &ctx.project.env_files, &ctx.project.config.variables,
+                    &mut explicit_refs,
                 );
                 Self::check_unresolved(&resolved, &format!("{} volume '{}'", loc, v.host_path), &mut resolution_errors);
                 v.host_path = resolved;
                 v
             }).collect();
 
-            // Resolve ${KEY@section@file} in raw values (strings only).
-            // Secrets are kept as ${KEY} references so they are not inlined in compose.
+            // Resolve ${KEY@section@file} in raw values (strings, sequences, mappings).
             let raw_keys: Vec<String> = svc.raw.keys().cloned().collect();
             for k in raw_keys {
-                if let Some(serde_yaml::Value::String(s)) = svc.raw.get(&k) {
-                    let resolved = Self::resolve_template_string_compose(
-                        s, &ctx.project.env_files, &ctx.project.config.variables,
+                if let Some(v) = svc.raw.get(&k) {
+                    let resolved = Self::resolve_yaml_value(
+                        v.clone(), &ctx.project.env_files, &ctx.project.config.variables,
+                        &mut explicit_refs, &format!("{} raw '{}'", loc, k), &mut resolution_errors,
                     );
-                    Self::check_unresolved(&resolved, &format!("{} raw '{}'", loc, k), &mut resolution_errors);
-                    svc.raw.insert(k, serde_yaml::Value::String(resolved));
+                    svc.raw.insert(k, resolved);
                 }
             }
 
-            svc
-        }).collect();
+            resolved_services.push(svc);
+        }
 
         if !resolution_errors.is_empty() {
             return Err(resolution_errors.join("\n"));
@@ -361,100 +358,35 @@ impl ProjectBuilder {
         println!("✓ Generated {}", traefik_path.display());
 
         // --- Generate root .env ---
-        // Start with config.dyard variables
+        // Contains config.dyard variables + secrets explicitly referenced via
+        // ${KEY@section@file} in volume/raw fields. No auto-deduction from compose.
         let mut root_env: HashMap<String, String> = ctx.project.config.variables.iter()
             .map(|(k, v)| match v {
                 crate::ast::ConfigValue::String(s) => (k.clone(), s.clone()),
                 crate::ast::ConfigValue::Secret(s) => (k.clone(), s.clone()),
             })
             .collect();
-
-        // Collect all non-secret vars from every env file referenced via `env from`.
-        // We collect all sections (not just the referenced one) because volume paths
-        // may reference vars from sibling sections of the same file.
-        // Only vars that appear as ${VAR} (no @) in compose are actually written to root .env.
-        let mut candidate_pool: HashMap<String, String> = HashMap::new();
-        let mut seen_files: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for service in &resolved_services {
-            for src in &service.env_from {
-                if let EnvSource::File { file, .. } = src {
-                    if file.is_empty() || !seen_files.insert(file.clone()) { continue; }
-                    if let Some(ef) = Self::env_file_lookup(&ctx.project.env_files, file) {
-                        // Root section
-                        let root_vars = Self::resolve_env_section(ef, None, 0);
-                        for (k, v) in root_vars {
-                            if !v.secret { candidate_pool.entry(k).or_insert(v.value); }
-                        }
-                        // All named sections
-                        for section_name in ef.sections.keys() {
-                            let vars = Self::resolve_env_section(ef, Some(section_name), 0);
-                            for (k, v) in vars {
-                                if !v.secret { candidate_pool.entry(k).or_insert(v.value); }
-                            }
-                        }
+        // Expand ${VAR} refs in collected explicit_refs values using config vars + each other.
+        // Needed because env file values may contain ${DATA_PATH} etc.
+        {
+            let config_str: HashMap<String, String> = ctx.project.config.variables.iter()
+                .map(|(k, v)| match v {
+                    crate::ast::ConfigValue::String(s) | crate::ast::ConfigValue::Secret(s) => (k.clone(), s.clone()),
+                })
+                .collect();
+            for _ in 0..10 {
+                let snapshot = explicit_refs.clone();
+                let mut any = false;
+                for v in explicit_refs.values_mut() {
+                    for (k, val) in snapshot.iter().chain(config_str.iter()) {
+                        let ph = format!("${{{}}}", k);
+                        if v.contains(&ph) { *v = v.replace(&ph, val); any = true; }
                     }
                 }
+                if !any { break; }
             }
         }
-
-        // Collect secret vars from env files so they can be written to root .env
-        // when referenced as ${KEY} in raw compose fields.
-        let mut secret_pool: HashMap<String, String> = HashMap::new();
-        let mut seen_files_s: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for service in &resolved_services {
-            for src in &service.env_from {
-                if let EnvSource::File { file, .. } = src {
-                    if file.is_empty() || !seen_files_s.insert(file.clone()) { continue; }
-                    if let Some(ef) = Self::env_file_lookup(&ctx.project.env_files, file) {
-                        let root_vars = Self::resolve_env_section(ef, None, 0);
-                        for (k, v) in root_vars {
-                            if v.secret { secret_pool.entry(k).or_insert(v.value); }
-                        }
-                        for section_name in ef.sections.keys() {
-                            let vars = Self::resolve_env_section(ef, Some(section_name), 0);
-                            for (k, v) in vars {
-                                if v.secret { secret_pool.entry(k).or_insert(v.value); }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Build full flat map (config vars + candidates), then iteratively expand
-        // ${VAR} refs within values (handles chained: A=${B}/x, B=${C}/y, C=val).
-        // config.dyard vars (root_env) take priority over env file candidates.
-        let mut flat: HashMap<String, String> = candidate_pool.clone();
-        flat.extend(secret_pool.clone());
-        flat.extend(root_env.clone());
-        for _ in 0..10 {
-            let snapshot = flat.clone();
-            let mut changed = false;
-            for val in flat.values_mut() {
-                for (k, v) in &snapshot {
-                    let placeholder = format!("${{{}}}", k);
-                    if val.contains(&placeholder) {
-                        *val = val.replace(&placeholder, v);
-                        changed = true;
-                    }
-                }
-            }
-            if !changed { break; }
-        }
-
-        // Find all ${VAR} (no @) referenced in compose, add to root_env if in flat map
-        let mut i = 0;
-        while i < compose_yaml.len() {
-            let Some(start) = compose_yaml[i..].find("${").map(|p| i + p) else { break; };
-            let Some(end) = compose_yaml[start..].find('}').map(|p| start + p) else { break; };
-            let expr = &compose_yaml[start + 2..end];
-            if !expr.contains('@') && !root_env.contains_key(expr) {
-                if let Some(val) = flat.get(expr) {
-                    root_env.insert(expr.to_string(), val.clone());
-                }
-            }
-            i = end + 1;
-        }
+        root_env.extend(explicit_refs);
 
         let mut root_env_lines: Vec<String> = root_env.iter()
             .map(|(k, v)| format!("{}={}", k, v))
@@ -466,14 +398,6 @@ impl ProjectBuilder {
 
         // --- Generate service env files in env/ ---
         for service in &resolved_services {
-            // Collect all secret lines: from Inline VarRefs AND from File sources.
-            let mut all_secret_lines: Vec<String> = service.env_from.iter()
-                .filter_map(|src| match src {
-                    EnvSource::Inline { key, value, secret: true } => Some(format!("{}={}", key, value)),
-                    _ => None,
-                })
-                .collect();
-
             for source in &service.env_from {
                 if let EnvSource::File { file, section } = source {
                     if file.is_empty() { continue; }
@@ -485,6 +409,38 @@ impl ProjectBuilder {
                     );
                     let env_path = env_output_dir.join(&filename);
 
+                    // Per-file local pool: all vars from this file + config vars, iteratively expanded.
+                    let file_local_pool: HashMap<String, String> = {
+                        let mut pool: HashMap<String, String> = HashMap::new();
+                        if let Some(ef) = Self::env_file_lookup(&ctx.project.env_files, file) {
+                            let root_vars = Self::resolve_env_section(ef, None, 0);
+                            for (k, v) in root_vars { pool.insert(k, v.value); }
+                            for sname in ef.sections.keys() {
+                                let svars = Self::resolve_env_section(ef, Some(sname), 0);
+                                for (k, v) in svars { pool.entry(k).or_insert(v.value); }
+                            }
+                        }
+                        for (k, v) in &ctx.project.config.variables {
+                            match v {
+                                crate::ast::ConfigValue::String(s) | crate::ast::ConfigValue::Secret(s) => {
+                                    pool.insert(k.clone(), s.clone());
+                                }
+                            }
+                        }
+                        for _ in 0..10 {
+                            let snapshot = pool.clone();
+                            let mut any_changed = false;
+                            for v in pool.values_mut() {
+                                for (k, val) in &snapshot {
+                                    let ph = format!("${{{}}}", k);
+                                    if v.contains(&ph) { *v = v.replace(&ph, val); any_changed = true; }
+                                }
+                            }
+                            if !any_changed { break; }
+                        }
+                        pool
+                    };
+
                     let content = if let Some(ef) = Self::env_file_lookup(&ctx.project.env_files, file.as_str()) {
                         let vars = Self::resolve_env_section(ef, section.as_deref(), 0);
                         let mut lines: Vec<String> = Vec::new();
@@ -492,7 +448,7 @@ impl ProjectBuilder {
                             let mut resolved_value = Self::resolve_template_string(
                                 &v.value, &ctx.project.env_files, &ctx.project.config.variables,
                             );
-                            for (fk, fv) in &flat {
+                            for (fk, fv) in &file_local_pool {
                                 resolved_value = resolved_value.replace(&format!("${{{}}}", fk), fv);
                             }
                             let loc = format!("env file '{}' key '{}'", file, k);
@@ -500,15 +456,12 @@ impl ProjectBuilder {
                             Self::check_unresolved(&resolved_value, &loc, &mut errs);
                             for e in errs { eprintln!("✗ {}", e); }
 
-                            let entries: Vec<String> = if v.aliases.is_empty() {
-                                vec![format!("{}={}", k, resolved_value)]
+                            if v.aliases.is_empty() {
+                                lines.push(format!("{}={}", k, resolved_value));
                             } else {
-                                v.aliases.iter().map(|alias| format!("{}={}", alias, resolved_value)).collect()
-                            };
-                            if v.secret {
-                                all_secret_lines.extend(entries);
-                            } else {
-                                lines.extend(entries);
+                                for alias in &v.aliases {
+                                    lines.push(format!("{}={}", alias, resolved_value));
+                                }
                             }
                         }
                         lines.sort();
@@ -521,15 +474,6 @@ impl ProjectBuilder {
                         .map_err(|e| format!("Failed to write {}: {}", env_path.display(), e))?;
                     println!("✓ Generated {}", env_path.display());
                 }
-            }
-
-            if !all_secret_lines.is_empty() {
-                let secrets_path = env_output_dir.join(format!("{}.secrets.env", service.name));
-                all_secret_lines.sort();
-                all_secret_lines.dedup();
-                fs::write(&secrets_path, all_secret_lines.join("\n"))
-                    .map_err(|e| format!("Failed to write {}: {}", secrets_path.display(), e))?;
-                println!("✓ Generated {}", secrets_path.display());
             }
         }
 
@@ -677,12 +621,49 @@ impl ProjectBuilder {
         result
     }
 
-    /// Like `resolve_template_string` but replaces secret `${KEY@section@file}` with
-    /// `${KEY}` so secrets are not inlined in compose — Docker reads them from .env.
-    fn resolve_template_string_compose(
+    /// Replaces every `${KEY@section@file}` in `s` with `${KEY_SECTION_FILE}` (mangled name)
+    /// and records `KEY_SECTION_FILE → resolved_value` into `vars_out` for root .env.
+    /// Both secrets and non-secrets are treated identically — the mangled name is unique
+    /// per (key, section, file) triple so there are no conflicts across env files.
+    /// Recursively resolve `${...}` refs in a serde_yaml Value (string, sequence, mapping).
+    fn resolve_yaml_value(
+        v: serde_yaml::Value,
+        env_files: &HashMap<String, EnvFile>,
+        config_vars: &HashMap<String, crate::ast::ConfigValue>,
+        vars_out: &mut HashMap<String, String>,
+        loc: &str,
+        errors: &mut Vec<String>,
+    ) -> serde_yaml::Value {
+        match v {
+            serde_yaml::Value::String(s) => {
+                let resolved = Self::resolve_and_collect_refs(&s, env_files, config_vars, vars_out);
+                Self::check_unresolved(&resolved, loc, errors);
+                serde_yaml::Value::String(resolved)
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                serde_yaml::Value::Sequence(
+                    seq.into_iter()
+                        .map(|item| Self::resolve_yaml_value(item, env_files, config_vars, vars_out, loc, errors))
+                        .collect()
+                )
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let mut out = serde_yaml::Mapping::new();
+                for (k, val) in map {
+                    out.insert(k, Self::resolve_yaml_value(val, env_files, config_vars, vars_out, loc, errors));
+                }
+                serde_yaml::Value::Mapping(out)
+            }
+            other => other,
+        }
+    }
+
+    /// Simple `${VAR}` references without `@` are expanded from config vars only.
+    fn resolve_and_collect_refs(
         s: &str,
         env_files: &HashMap<String, EnvFile>,
         config_vars: &HashMap<String, crate::ast::ConfigValue>,
+        vars_out: &mut HashMap<String, String>,
     ) -> String {
         let mut result = s.to_string();
         let mut i = 0;
@@ -700,28 +681,108 @@ impl ProjectBuilder {
                 Self::env_file_lookup(env_files, file).and_then(|ef| {
                     let vars = Self::resolve_env_section(ef, if section.is_empty() { None } else { Some(section) }, 0);
                     vars.get(key.as_str()).map(|v| {
-                        if v.secret { format!("${{{}}}", key) } else { v.value.clone() }
+                        // Build a pool of plain var values from the section + config vars,
+                        // then iteratively expand the value to resolve intra-section refs.
+                        let mut pool: HashMap<String, String> = vars.iter()
+                            .filter_map(|(k, ev)| if !ev.secret { Some((k.clone(), ev.value.clone())) } else { None })
+                            .collect();
+                        for (ck, cv) in config_vars {
+                            if let crate::ast::ConfigValue::String(s) = cv {
+                                pool.insert(ck.clone(), s.clone());
+                            }
+                        }
+                        let mut expanded = v.value.clone();
+                        for _ in 0..10 {
+                            let prev = expanded.clone();
+                            for (pk, pv) in &pool {
+                                expanded = expanded.replace(&format!("${{{}}}", pk), pv);
+                            }
+                            if expanded == prev { break; }
+                        }
+                        let mangled = Self::mangle_varref(&key, section, file);
+                        vars_out.insert(mangled.clone(), expanded);
+                        format!("${{{}}}", mangled)
                     })
                 })
             } else {
                 None
             };
             if let Some(val) = replacement {
-                let is_ref = val.starts_with("${") && val.ends_with('}');
                 result = format!("{}{}{}", &result[..start], val, &result[end + 1..]);
-                i = start + if is_ref { val.len() } else { 0 };
+                i = start + val.len(); // skip past the mangled ${NAME}
             } else {
                 i = end + 1;
             }
         }
+        // First pass: replace plain ${VAR} from config vars (inline — no .env entry needed).
         for (k, v) in config_vars {
             let placeholder = format!("${{{}}}", k);
             if let crate::ast::ConfigValue::String(val) = v {
                 result = result.replace(&placeholder, val);
             }
         }
+        // Second pass: any remaining ${VAR} (not @-qualified) — search all env files.
+        // If found (non-secret), add to vars_out under the plain name so it lands in root .env.
+        let mut j = 0;
+        while j < result.len() {
+            let Some(start) = result[j..].find("${").map(|p| j + p) else { break; };
+            let Some(end) = result[start..].find('}').map(|p| start + p) else { break; };
+            let expr = &result[start + 2..end];
+            if !expr.contains('@') {
+                let key = expr.trim().to_string();
+                // Search every env file section for this key; expand intra-section refs.
+                let mut found: Option<String> = None;
+                'outer: for ef in env_files.values() {
+                    for section in ef.sections.values() {
+                        if let Some(entry) = section.variables.get(key.as_str()) {
+                            if !entry.secret {
+                                // Build pool from this section + config vars for expansion.
+                                let mut pool: HashMap<String, String> = section.variables.iter()
+                                    .filter_map(|(k, ev)| if !ev.secret { Some((k.clone(), ev.value.clone())) } else { None })
+                                    .collect();
+                                for (ck, cv) in config_vars.iter() {
+                                    if let crate::ast::ConfigValue::String(s) = cv {
+                                        pool.insert(ck.clone(), s.clone());
+                                    }
+                                }
+                                let mut expanded = entry.value.clone();
+                                for _ in 0..10 {
+                                    let prev = expanded.clone();
+                                    for (pk, pv) in &pool {
+                                        expanded = expanded.replace(&format!("${{{}}}", pk), pv);
+                                    }
+                                    if expanded == prev { break; }
+                                }
+                                found = Some(expanded);
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+                if let Some(val) = found {
+                    vars_out.insert(key.clone(), val);
+                }
+            }
+            j = end + 1;
+        }
         result
     }
+
+    /// Compute a unique env var name for a `${KEY@section@file}` reference.
+    /// Format: `KEY_SECTION_FILE` (file without .env extension).
+    /// Any non-alphanumeric character is replaced with `_`.
+    fn mangle_varref(key: &str, section: &str, file: &str) -> String {
+        let file_stem = file.trim_end_matches(".env").trim_end_matches(".ENV");
+        let norm = |s: &str| -> String {
+            s.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect()
+        };
+        if section.is_empty() {
+            format!("{}_{}", norm(key), norm(file_stem))
+        } else {
+            format!("{}_{}_{}", norm(key), norm(section), norm(file_stem))
+        }
+    }
+
 
     /// Process a network YAML file:
     /// 1. Resolve `${VAR}` and `${KEY@section@file}` references (non-secrets only).

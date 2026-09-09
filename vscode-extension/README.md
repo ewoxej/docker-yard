@@ -28,14 +28,24 @@ Visual Studio Code syntax highlighting extension for the dyard infrastructure DS
 
 ## Installation
 
-1. Open VS Code
-2. Go to Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`)
-3. Search for "dyard"
-4. Click Install
+### From VSIX (recommended)
 
-Or install from command line:
+1. Download `dyard-syntax-*.vsix` from the [Releases page](https://github.com/ewoxej/dyard/releases).
+2. Install:
+
+   **VS Code UI** — Extensions sidebar (`Ctrl+Shift+X`) → `···` menu → *Install from VSIX…* → pick the file.
+
+   **Command line:**
+   ```bash
+   code --install-extension dyard-syntax-*.vsix
+   ```
+
+3. Reload VS Code.
+
+### Uninstall
+
 ```bash
-code --install-extension dyard.dyard-syntax
+code --uninstall-extension dyard.dyard-syntax
 ```
 
 ## Usage

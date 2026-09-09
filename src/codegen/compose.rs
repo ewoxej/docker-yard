@@ -172,15 +172,10 @@ impl ComposeGenerator {
         if !service.env_from.is_empty() || !service.raw.is_empty() {
             let mut env_map = Mapping::new();
 
-            // Process env_from
-            let mut has_secret_inline = false;
             for source in &service.env_from {
                 match source {
-                    EnvSource::Inline { key, value, secret: false } => {
+                    EnvSource::Inline { key, value, .. } => {
                         env_map.insert(key.clone().into(), value.clone().into());
-                    }
-                    EnvSource::Inline { secret: true, .. } => {
-                        has_secret_inline = true;
                     }
                     EnvSource::File { .. } | EnvSource::VarRef { .. } => {
                         // File → handled by env_file below; VarRef → resolved before codegen
@@ -192,8 +187,8 @@ impl ComposeGenerator {
                 svc.insert("environment".into(), Value::Mapping(env_map));
             }
 
-            // env_file for file sources + secrets file
-            let mut file_sources: Vec<String> = service
+            // env_file for file sources (all vars — secret and non-secret — in one file)
+            let file_sources: Vec<String> = service
                 .env_from
                 .iter()
                 .filter_map(|s| {
@@ -212,9 +207,6 @@ impl ComposeGenerator {
                     }
                 })
                 .collect();
-            if has_secret_inline {
-                file_sources.push(format!("env/{}.secrets.env", service.name));
-            }
 
             if !file_sources.is_empty() {
                 svc.insert(

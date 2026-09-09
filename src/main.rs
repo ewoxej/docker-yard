@@ -31,14 +31,21 @@ enum Commands {
         /// Force regeneration
         #[arg(long)]
         regenerate: bool,
+        /// Service names (optional)
+        services: Vec<String>,
     },
     /// Stop services (docker-compose down)
-    Down {},
+    Down {
+        /// Service names (optional)
+        services: Vec<String>,
+    },
     /// Restart services (down + up)
     Restart {
         /// Detached mode
         #[arg(short)]
         d: bool,
+        /// Service names (optional)
+        services: Vec<String>,
     },
     /// View logs
     Logs {
@@ -84,14 +91,14 @@ fn main() {
         Some(Commands::Generate { regenerate }) => {
             handle_generate(&config_path, regenerate);
         }
-        Some(Commands::Up { d, regenerate }) => {
-            handle_up(&config_path, d, regenerate);
+        Some(Commands::Up { d, regenerate, services }) => {
+            handle_up(&config_path, d, regenerate, &services);
         }
-        Some(Commands::Down {}) => {
-            handle_down(&config_path);
+        Some(Commands::Down { services }) => {
+            handle_down(&config_path, &services);
         }
-        Some(Commands::Restart { d }) => {
-            handle_restart(&config_path, d);
+        Some(Commands::Restart { d, services }) => {
+            handle_restart(&config_path, d, &services);
         }
         Some(Commands::Logs { service, f, tail }) => {
             handle_logs(&config_path, service, f, tail);
@@ -130,24 +137,22 @@ fn handle_generate(config_path: &Path, regenerate: bool) {
     }
 }
 
-fn handle_up(config_path: &Path, detached: bool, regenerate: bool) {
+fn handle_up(config_path: &Path, detached: bool, regenerate: bool, services: &[String]) {
     handle_generate(config_path, regenerate);
     println!("🚀 Starting services...");
-    compose_with_file(config_path, &["up"], detached);
+    compose_with_file(config_path, &["up"], detached, services);
 }
 
-fn handle_down(config_path: &Path) {
-    println!("Stopping services from {}", config_path.display());
-    compose_with_file(config_path, &["down"], false);
+fn handle_down(config_path: &Path, services: &[String]) {
+    compose_with_file(config_path, &["down"], false, services);
 }
 
-fn handle_restart(config_path: &Path, detached: bool) {
-    println!("Restarting services from {}", config_path.display());
-    compose_with_file(config_path, &["down"], false);
-    compose_with_file(config_path, &["up"], detached);
+fn handle_restart(config_path: &Path, detached: bool, services: &[String]) {
+    compose_with_file(config_path, &["down"], false, services);
+    compose_with_file(config_path, &["up"], detached, services);
 }
 
-fn compose_with_file(config_path: &Path, cmd: &[&str], detached: bool) {
+fn compose_with_file(config_path: &Path, cmd: &[&str], detached: bool, services: &[String]) {
     let compose_file = match ProjectBuilder::build(config_path) {
         Ok(ctx) => {
             let root = config_path.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -164,6 +169,9 @@ fn compose_with_file(config_path: &Path, cmd: &[&str], detached: bool) {
     args.extend_from_slice(cmd);
     if detached {
         args.push("-d");
+    }
+    for svc in services {
+        args.push(svc.as_str());
     }
     run_docker_command(&args);
 }
