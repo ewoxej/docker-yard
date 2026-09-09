@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="ewoxej/dyard"
+REPO="ewoxej/docker-yard"
 BIN="dyard"
 INSTALL_DIR="/usr/local/bin"
 

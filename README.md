@@ -5,10 +5,10 @@ Infrastructure DSL for Docker Compose + Traefik. Generates `docker-compose.yml`,
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ewoxej/dyard/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ewoxej/docker-yard/main/install.sh | sh
 ```
 
-Or download the binary from [Releases](https://github.com/ewoxej/dyard/releases) and put it on your `PATH` manually.
+Or download the binary from [Releases](https://github.com/ewoxej/docker-yard/releases) and put it on your `PATH` manually.
 
 ## Usage
 
@@ -37,7 +37,7 @@ Syntax highlighting and snippets for `.dyard` and `config.dyard` files.
 
 ### Install from VSIX (Releases)
 
-1. Download `dyard-syntax-*.vsix` from [Releases](https://github.com/ewoxej/dyard/releases).
+1. Download `dyard-syntax-*.vsix` from [Releases](https://github.com/ewoxej/docker-yard/releases).
 2. Install it:
 
    **VS Code UI** — Extensions sidebar (`Ctrl+Shift+X`) → `···` menu → *Install from VSIX…* → pick the file.

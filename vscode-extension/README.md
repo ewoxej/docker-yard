@@ -30,7 +30,7 @@ Visual Studio Code syntax highlighting extension for the dyard infrastructure DS
 
 ### From VSIX (recommended)
 
-1. Download `dyard-syntax-*.vsix` from the [Releases page](https://github.com/ewoxej/dyard/releases).
+1. Download `dyard-syntax-*.vsix` from the [Releases page](https://github.com/ewoxej/docker-yard/releases).
 2. Install:
 
    **VS Code UI** — Extensions sidebar (`Ctrl+Shift+X`) → `···` menu → *Install from VSIX…* → pick the file.
